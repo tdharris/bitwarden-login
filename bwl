@@ -52,6 +52,10 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+# Validate both bitwarden (bw) & jq
+command -v jq >/dev/null 2>&1 || { echo >&2 "jq could not be found."; exit 1; }
+command -v bw >/dev/null 2>&1 || { echo >&2 "bw could not be found."; exit 1; }
+
 function log_debug() {
     if [ "$DEBUG" = true ]; then
         echo "DEBUG $*"
