@@ -1,0 +1,174 @@
+#!/bin/bash
+bwl_base="$HOME/.bwl"
+bwl_config="$bwl_base/config"
+bwl_session_file="$bwl_base/session"
+
+usage()
+{
+    echo "bwl: login to Bitwarden, encrypt and persist session tokens"
+    echo
+    echo "Usage: bwl [--help] [--login] [--logout] [--encrypt-method]"
+    echo
+    echo "To export environment variables, use: \`eval \$(bwl)\`"
+    echo
+    echo "Options:"
+    echo -e "\t-h  --help"
+    echo -e "\t-l  --logout bw logout"
+    echo -e "\t-e  --encrypt-method [gpg|keybase|none] (defaults to none)"
+    echo -e "\t-r  --gpg-recipient <email> (conditional if using gpg encrypt-method)"
+    echo -e "\t-d  --debug includes debug information to stdout"
+    echo
+    echo "You can optionally use ~/.bwl/config to store:"
+    echo -e "\nBW_CLIENTID=<client_id>\nBW_CLIENTSECRET=<secret>\nBWL_ENCRYPT_METHOD=<gpg|keybase|none>\nGPG_RECIPIENT=<gpg-email>"
+    echo
+}
+
+while [[ $# > 0 ]]; do
+    key="$1"
+    case $key in
+        -h | --help)
+            usage
+            exit
+            ;;
+        -l | --logout)
+            LOGOUT=true
+            ;;
+        -e | --encrypt-method)
+            BWL_ENCRYPT_METHOD=$2
+            shift
+            ;;
+        -r | --gpg-recipient)
+            GPG_RECIPIENT=$2
+            shift
+            ;;
+        -d | --debug)
+            DEBUG=true
+            ;;
+        *)
+            echo "ERROR: unknown parameter \"$PARAM\""
+            usage
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+function log_debug() {
+    if [ "$DEBUG" = true ]; then 
+        echo "DEBUG $@"
+    fi
+}
+
+function bitwardenLogin() {
+    function bwStatus() {
+        log_debug "bw status"
+        echo "$(bw status 2>/dev/null | jq '.status')"
+    }
+  function bwLogin() {
+      log_debug "Logging into bw"
+      if [[ "$bw_login_apikey" == true ]]; then
+        bw login --apikey --raw
+        else bw login --raw
+      fi
+  }
+
+  function bwUnlock() {
+    log_debug "Unlocking bw"
+    if [ bwStatus != \"unlocked\" ]; then
+      checkEncryptedBitwardenSession
+      if [ $? -ne 0 ]; then
+        bwLogin
+        log_debug "bw unlock"
+        export BW_SESSION="$(bw unlock --raw)"
+        encryptBWSession
+        echo export BW_SESSION="$BW_SESSION"
+      fi
+    fi
+  }
+# Check for encrypted session token (in case already unlocked in another terminal session)
+  function checkEncryptedBitwardenSession() {
+    log_debug "Checking for existing bw session using session file '$bwl_session_file'"
+    if [ -s "$bwl_session_file" ]; then
+        log_debug "Found existing bw session, encrypt-method:$BWL_ENCRYPT_METHOD"
+        decryptBWSession;
+        if [ $? -ne 0 ]; then
+            (>&2 echo "Failed to retrieve session key, resetting..")
+            rm -f "$bwl_session_file" &>/dev/null
+            bwUnlock
+        fi
+        else log_debug "No existing bw session found." && return 1
+    fi
+  }
+
+  # Check if "unauthenticated" (in case of logout)
+  if [ bwStatus == \"unauthenticated\" ]; then
+    log_debug "bw is unauthenticated, ensuring proper logout and invalidating existing sessions"
+    # Ensure proper logout since any existing sessions are invalidated
+    bitwardenLogout
+    bwLogin
+  fi
+
+  # Ensure "unlocked"
+  bwUnlock
+}
+
+function bitwardenLogout() {
+  unset BW_SESSION
+  rm "$bwl_session_file" 2>/dev/null
+  bw logout
+}
+
+function encryptBWSession() {
+    if [[ -z "$BWL_ENCRYPT_METHOD" || "$BWL_ENCRYPT_METHOD" == "none" ]]; then
+        echo "$BW_SESSION" > "$bwl_session_file"
+    elif [ "$BWL_ENCRYPT_METHOD" == "gpg" ]; then
+        echo "$BW_SESSION" | gpg -e -a -r "$GPG_RECIPIENT" -o "$bwl_session_file"
+        log_debug "encrypted bw session (rc:$?)"
+    elif [ "$bwl_encrypted_method" == "keybase" ]; then
+        keybase pgp encrypt -m "$BW_SESSION" -o "$bwl_session_file"
+        log_debug "encrypted bw session (rc:$?)"
+    fi
+}
+
+function decryptBWSession() {
+    local sessionkey
+    if [[ -z "$BWL_ENCRYPT_METHOD" || "$BWL_ENCRYPT_METHOD" == "none" ]]; then
+        log_debug "exporting BW_SESSION"
+        sessionkey="$(cat $bwl_session_file)"
+        [ $? -ne 0 ] && return 1
+        echo export BW_SESSION="$sessionkey"
+    elif [ "$BWL_ENCRYPT_METHOD" == "gpg" ]; then
+        log_debug "decrypting gpg secret and exporting BW_SESSION"
+        sessionkey="$(gpg -d $bwl_session_file 2>/dev/null)"
+        [ $? -ne 0 ] && return 1
+        echo export BW_SESSION="$sessionkey"
+    elif [ "$bwl_encrypted_method" == "keybase" ]; then
+        log_debug "decrypting keybase secret and exporting BW_SESSION"
+        sessionkey="$(keybase pgp decrypt -i $bwl_session_file)"
+        [ $? -ne 0 ] && return 1
+        echo export BW_SESSION="$sessionkey"
+    fi
+}
+
+if [ "$LOGOUT" = true ]; then 
+    bitwardenLogout
+fi
+
+if [[ -f "$bwl_config" ]]; then
+    log_debug "Reading from '$bwl_config'"
+    source "$bwl_config"
+fi
+
+bw_login_apikey=false
+if [[ ! -z "$BW_CLIENTID" && ! -z "$BW_CLIENTSECRET" ]]; then
+    bw_login_apikey=true
+fi
+
+if [[ "$BWL_ENCRYPT_METHOD" == "gpg" ]]; then
+    if [[ -z "$GPG_RECIPIENT" ]]; then
+        (>&2 echo "ERROR: BWL_ENCRYPT_METHOD is set to 'gpg', yet missing a GPG_RECIPIENT: '$GPG_RECIPIENT'")
+        exit 1
+    fi
+fi
+
+bitwardenLogin
