@@ -179,6 +179,7 @@ function localEnvironment() {
 
     bw_login_apikey=false
     if [[ -n "$BW_CLIENTID" && -n "$BW_CLIENTSECRET" ]]; then
+        log_debug "Detected bw api key credentials"
         bw_login_apikey=true
     fi
 }
