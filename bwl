@@ -4,9 +4,9 @@ BWL_CONFIG="$BWL_BASE/config"
 BWL_SESSION_FILE="$BWL_BASE/session"
 
 usage() {
-    echo "bwl: login to Bitwarden, encrypt and persist session tokens"
+    echo "bwl: login to Bitwarden, encrypt and persist session tokens."
     echo
-    echo "Usage: bwl [--help] [--login] [--logout] [--encrypt-method]"
+    echo "Usage: bwl [options]"
     echo
     echo "To export environment variables, use: \`eval \$(bwl)\`"
     echo
