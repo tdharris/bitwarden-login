@@ -145,7 +145,8 @@ function encryptBWSession() {
         keybase pgp encrypt -m "$BW_SESSION" -o "$BWL_SESSION_FILE"
         log_debug "encrypted bw session (rc:$?)"
     else
-        echo "$BW_SESSION" >"$BWL_SESSION_FILE"
+        mkdir -p "$BWL_BASE"
+        echo "$BW_SESSION" > "$BWL_SESSION_FILE"
     fi
     exportBWSession
 }
