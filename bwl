@@ -72,7 +72,8 @@ function bitwardenLoginAndUnlock() {
             bw login --apikey --raw
             checkLogin "$?"
         else
-            # This approach already returns a session key
+            # Logging in using email and password is the only method which
+            # automatically unlocks the Vault and thus returns a session key
             BW_SESSION="$(bw login --raw)"
             checkLogin "$?"
             export BW_SESSION
