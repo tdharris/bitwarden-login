@@ -63,6 +63,18 @@ function log_debug() {
 }
 
 function bitwardenLoginAndUnlock() {
+    # Attempt fast path if session file exists
+    if [ -s "$BWL_SESSION_FILE" ]; then
+        log_debug "Attempting fast path decryption..."
+        if decryptBWSession "true"; then
+            exit 0
+        else
+            log_debug "Invalid session or decryption failed, removing session file"
+            rm -f "$BWL_SESSION_FILE" &>/dev/null
+            unset BW_SESSION
+        fi
+    fi
+
     function bwLogin() {
         function checkLogin() {
             if [ "$1" -ne 0 ]; then bwLogin; fi
@@ -154,34 +166,32 @@ function encryptBWSession() {
 
 function decryptBWSession() {
     local session_key
+    local return_instead_of_restart="${1:-false}"
 
     function checkResponse() {
         if [[ $1 -ne 0 || -z "$session_key" ]]; then
-            restartLogin "Invalid session key retrieved"
+            if [ "$return_instead_of_restart" == "true" ]; then return 1; else restartLogin "Invalid session key retrieved"; fi
         fi
     }
 
     if [ "$BWL_ENCRYPT_METHOD" == "gpg" ]; then
         log_debug "decrypting gpg secret and exporting BW_SESSION"
         session_key="$(gpg -d "$BWL_SESSION_FILE" 2>/dev/null)"
-        checkResponse $?
+        checkResponse $? || return 1
     elif [ "$BWL_ENCRYPT_METHOD" == "keybase" ]; then
         log_debug "decrypting keybase secret and exporting BW_SESSION"
-        session_key="$(keybase pgp decrypt -i "$BWL_SESSION_FILE")"
-        checkResponse $?
+        session_key="$(keybase pgp decrypt -i "$BWL_SESSION_FILE" 2>/dev/null)"
+        checkResponse $? || return 1
     else
         log_debug "exporting BW_SESSION"
-        session_key="$(cat "$BWL_SESSION_FILE")"
-        checkResponse $?
+        session_key="$(cat "$BWL_SESSION_FILE" 2>/dev/null)"
+        checkResponse $? || return 1
     fi
 
-    # Validate decrypted session key
+    # Assume decrypted session key is valid for fast initial loading
     export BW_SESSION="$session_key"
-    if [ "$(bw status 2>/dev/null | jq '.status')" != \"unlocked\" ]; then
-        restartLogin "Invalid decrypted session key"
-    fi
-
-    echo export BW_SESSION="$session_key"
+    printf "export BW_SESSION=%q\n" "$session_key"
+    return 0
 }
 
 function restartLogin() {
@@ -192,7 +202,7 @@ function restartLogin() {
 
 function exportBWSession() {
     log_debug "Exporting bw session"
-    echo export BW_SESSION="$BW_SESSION"
+    printf "export BW_SESSION=%q\n" "$BW_SESSION"
     exit 0
 }
 
